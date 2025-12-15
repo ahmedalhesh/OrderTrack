@@ -11,11 +11,26 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { insertOrderSchema, type InsertOrder, type Order, ORDER_STATUSES } from "@shared/schema";
-import { Loader2, Save, X } from "lucide-react";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "@/components/ui/command";
+import { insertOrderSchema, type InsertOrder, type Order, ORDER_STATUSES, type Customer } from "@shared/schema";
+import { Loader2, Save, X, Check, ChevronsUpDown } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useAuthStore } from "@/lib/auth";
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { cn } from "@/lib/utils";
 
 interface OrderFormProps {
   order?: Order | null;
@@ -25,26 +40,69 @@ interface OrderFormProps {
 
 export function OrderForm({ order, onSuccess, onCancel }: OrderFormProps) {
   const [isLoading, setIsLoading] = useState(false);
+  const [selectedCustomerId, setSelectedCustomerId] = useState<string>("");
+  const [customerPopoverOpen, setCustomerPopoverOpen] = useState(false);
   const { toast } = useToast();
   const token = useAuthStore((state) => state.token);
 
-  const form = useForm<InsertOrder>({
+  // جلب قائمة العملاء
+  const { data: customers = [] } = useQuery<Customer[]>({
+    queryKey: ["/api/customers"],
+    queryFn: async () => {
+      const response = await fetch("/api/customers", {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+      if (!response.ok) return [];
+      return response.json();
+    },
+  });
+
+  const form = useForm<InsertOrder & { customerId?: number }>({
     resolver: zodResolver(insertOrderSchema),
     defaultValues: {
       orderNumber: order?.orderNumber || "",
       customerName: order?.customerName || "",
       phoneNumber: order?.phoneNumber || "",
+      customerId: order?.customerId || undefined,
       orderStatus: order?.orderStatus || "تم استلام الطلب",
       estimatedDeliveryDate: order?.estimatedDeliveryDate || "",
       adminNotes: order?.adminNotes || "",
+      orderValue: order?.orderValue || "",
+      itemsCount: order?.itemsCount || undefined,
+      shippingCost: order?.shippingCost || "",
     },
   });
 
-  const onSubmit = async (data: InsertOrder) => {
+  // عند اختيار عميل، ملء البيانات تلقائياً
+  useEffect(() => {
+    if (selectedCustomerId && customers.length > 0) {
+      const customer = customers.find(c => c.id.toString() === selectedCustomerId);
+      if (customer) {
+        form.setValue("customerName", customer.name);
+        form.setValue("phoneNumber", customer.phoneNumber);
+        form.setValue("customerId", customer.id);
+      }
+    }
+  }, [selectedCustomerId, customers, form]);
+
+  const onSubmit = async (data: InsertOrder & { customerId?: number }) => {
     setIsLoading(true);
     try {
       const url = order ? `/api/orders/${order.id}` : "/api/orders";
       const method = order ? "PUT" : "POST";
+      
+      // إرسال البيانات مع customerId إذا كان موجوداً
+      const orderData: any = { ...data };
+      if (data.customerId) {
+        orderData.customerId = data.customerId;
+      }
+      
+      // عند إنشاء طلبية جديدة، إزالة orderNumber ليتم توليده تلقائياً
+      if (!order) {
+        delete orderData.orderNumber;
+      }
       
       const response = await fetch(url, {
         method,
@@ -52,7 +110,7 @@ export function OrderForm({ order, onSuccess, onCancel }: OrderFormProps) {
           "Content-Type": "application/json",
           Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify(data),
+        body: JSON.stringify(orderData),
       });
       
       const result = await response.json();
@@ -89,12 +147,16 @@ export function OrderForm({ order, onSuccess, onCancel }: OrderFormProps) {
               name="orderNumber"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>رقم الطلبية *</FormLabel>
+                  <FormLabel>رقم الطلبية {order ? "*" : "(سيتم توليده تلقائياً)"}</FormLabel>
                   <FormControl>
                     <Input
-                      placeholder="مثال: ORD-12345"
+                      placeholder={order ? "مثال: ORD-12345" : "سيتم توليده تلقائياً"}
                       data-testid="input-form-order-number"
                       {...field}
+                      readOnly={true}
+                      disabled={!order}
+                      className="bg-muted"
+                      value={field.value || ""}
                     />
                   </FormControl>
                   <FormMessage />
@@ -102,6 +164,75 @@ export function OrderForm({ order, onSuccess, onCancel }: OrderFormProps) {
               )}
             />
 
+            {!order && customers.length > 0 && (
+              <FormItem>
+                <FormLabel>اختر عميل (اختياري)</FormLabel>
+                <Popover open={customerPopoverOpen} onOpenChange={setCustomerPopoverOpen}>
+                  <PopoverTrigger asChild>
+                    <FormControl>
+                      <Button
+                        variant="outline"
+                        role="combobox"
+                        className={cn(
+                          "w-full justify-between h-9",
+                          !selectedCustomerId && "text-muted-foreground"
+                        )}
+                      >
+                        {selectedCustomerId
+                          ? customers.find((customer) => customer.id.toString() === selectedCustomerId)?.name + " - " + customers.find((customer) => customer.id.toString() === selectedCustomerId)?.accountNumber
+                          : "اختر عميل من القائمة أو ابحث..."}
+                        <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                      </Button>
+                    </FormControl>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-full p-0" align="start">
+                    <Command 
+                      filter={(value, search) => {
+                        const searchLower = search.toLowerCase();
+                        const valueLower = value.toLowerCase();
+                        // البحث في جميع أجزاء القيمة
+                        if (valueLower.includes(searchLower)) {
+                          return 1;
+                        }
+                        return 0;
+                      }}
+                    >
+                      <CommandInput placeholder="ابحث بالاسم، رقم الحساب، أو رقم الهاتف..." />
+                      <CommandList>
+                        <CommandEmpty>لم يتم العثور على عميل.</CommandEmpty>
+                        <CommandGroup>
+                          {customers.map((customer) => (
+                            <CommandItem
+                              key={customer.id}
+                              value={`${customer.name} ${customer.accountNumber} ${customer.phoneNumber} ${customer.name} ${customer.accountNumber} ${customer.phoneNumber}`}
+                              keywords={[customer.name, customer.accountNumber, customer.phoneNumber, customer.email || ""]}
+                              onSelect={() => {
+                                setSelectedCustomerId(customer.id.toString());
+                                setCustomerPopoverOpen(false);
+                              }}
+                            >
+                              <Check
+                                className={cn(
+                                  "ml-2 h-4 w-4",
+                                  selectedCustomerId === customer.id.toString() ? "opacity-100" : "opacity-0"
+                                )}
+                              />
+                              <div className="flex flex-col">
+                                <span>{customer.name} - {customer.accountNumber}</span>
+                                <span className="text-xs text-muted-foreground" dir="ltr">{customer.phoneNumber}</span>
+                              </div>
+                            </CommandItem>
+                          ))}
+                        </CommandGroup>
+                      </CommandList>
+                    </Command>
+                  </PopoverContent>
+                </Popover>
+              </FormItem>
+            )}
+          </div>
+
+          <div className="grid gap-4 md:grid-cols-2">
             <FormField
               control={form.control}
               name="customerName"
@@ -113,6 +244,29 @@ export function OrderForm({ order, onSuccess, onCancel }: OrderFormProps) {
                       placeholder="أدخل اسم الزبون"
                       data-testid="input-form-customer-name"
                       {...field}
+                      readOnly={true}
+                      className="bg-muted"
+                    />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name="phoneNumber"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>رقم الهاتف *</FormLabel>
+                  <FormControl>
+                    <Input
+                      placeholder="مثال: 0912345678"
+                      dir="ltr"
+                      className="text-right bg-muted"
+                      data-testid="input-form-phone"
+                      {...field}
+                      readOnly={true}
                     />
                   </FormControl>
                   <FormMessage />
@@ -120,26 +274,83 @@ export function OrderForm({ order, onSuccess, onCancel }: OrderFormProps) {
               )}
             />
           </div>
+        </div>
 
-          <FormField
-            control={form.control}
-            name="phoneNumber"
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel>رقم الهاتف *</FormLabel>
-                <FormControl>
-                  <Input
-                    placeholder="مثال: 0912345678"
-                    dir="ltr"
-                    className="text-right"
-                    data-testid="input-form-phone"
-                    {...field}
-                  />
-                </FormControl>
-                <FormMessage />
-              </FormItem>
-            )}
-          />
+        <div className="space-y-4">
+          <h3 className="font-semibold text-lg border-b pb-2">معلومات الطلبية</h3>
+          
+          <div className="grid gap-4 md:grid-cols-2">
+            <FormField
+              control={form.control}
+              name="orderValue"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>قيمة الطلبية</FormLabel>
+                  <FormControl>
+                    <Input
+                      placeholder="مثال: 150.50 د.ل"
+                      dir="ltr"
+                      type="number"
+                      step="0.01"
+                      data-testid="input-form-order-value"
+                      {...field}
+                      value={field.value || ""}
+                      readOnly={true}
+                      className="bg-muted"
+                    />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name="itemsCount"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>عدد الأصناف</FormLabel>
+                  <FormControl>
+                    <Input
+                      placeholder="مثال: 3"
+                      dir="ltr"
+                      type="number"
+                      min="1"
+                      data-testid="input-form-items-count"
+                      {...field}
+                      value={field.value || ""}
+                      readOnly={true}
+                      className="bg-muted"
+                    />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name="shippingCost"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>قيمة الشحن</FormLabel>
+                  <FormControl>
+                    <Input
+                      placeholder="مثال: 50.00 د.ل"
+                      dir="ltr"
+                      type="number"
+                      step="0.01"
+                      data-testid="input-form-shipping-cost"
+                      {...field}
+                      value={field.value || ""}
+                      onChange={(e) => field.onChange(e.target.value ? e.target.value : "")}
+                    />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+          </div>
         </div>
 
         <div className="space-y-4">

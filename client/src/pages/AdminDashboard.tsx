@@ -1,5 +1,13 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
+import { 
+  requestNotificationPermission, 
+  getNotificationPermission, 
+  isNotificationSupported,
+  notifyOrderUpdate,
+  notifyNewOrder,
+  notifyOrderDeleted
+} from "@/lib/notifications";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -35,7 +43,10 @@ import {
 } from "@/components/ui/alert-dialog";
 import { OrderStatusBadge } from "@/components/OrderStatusBadge";
 import { OrderForm } from "@/components/OrderForm";
-import { type Order, type OrderStatus, ORDER_STATUSES } from "@shared/schema";
+import { CustomerForm } from "@/components/CustomerForm";
+import { Footer } from "@/components/Footer";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { type Order, type OrderStatus, ORDER_STATUSES, type Customer } from "@shared/schema";
 import { 
   Package, 
   Plus, 
@@ -49,7 +60,9 @@ import {
   CheckCircle2,
   Clock,
   Truck,
-  XCircle
+  XCircle,
+  Bell,
+  Settings as SettingsIcon
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useAuthStore } from "@/lib/auth";
@@ -63,6 +76,14 @@ export default function AdminDashboard() {
   const { toast } = useToast();
   const { token, logout, isAuthenticated } = useAuthStore();
   const [, setLocation] = useLocation();
+  const wsRef = useRef<WebSocket | null>(null);
+  const reconnectTimeoutRef = useRef<number | null>(null);
+  const [isCustomerFormOpen, setIsCustomerFormOpen] = useState(false);
+  const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
+  const [activeTab, setActiveTab] = useState("orders");
+  const [notificationPermission, setNotificationPermission] = useState<NotificationPermission>(
+    isNotificationSupported() ? getNotificationPermission() : "denied"
+  );
 
   useEffect(() => {
     if (!isAuthenticated) {
@@ -74,6 +95,139 @@ export default function AdminDashboard() {
     queryKey: ["/api/orders"],
     enabled: isAuthenticated,
   });
+
+  const { data: customers = [], isLoading: isLoadingCustomers, refetch: refetchCustomers } = useQuery<Customer[]>({
+    queryKey: ["/api/customers"],
+    enabled: isAuthenticated,
+    queryFn: async () => {
+      const response = await fetch("/api/customers", {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+      if (!response.ok) throw new Error("فشل تحميل العملاء");
+      return response.json();
+    },
+  });
+
+  // إعداد WebSocket للاستماع للتحديثات اللحظية
+  useEffect(() => {
+    if (!isAuthenticated) return;
+
+    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+    const wsUrl = `${protocol}//${window.location.host}/ws`;
+    
+    const connectWebSocket = () => {
+      try {
+        const ws = new WebSocket(wsUrl);
+        
+        ws.onopen = () => {
+          console.log("تم الاتصال بخادم التحديثات اللحظية (لوحة التحكم)");
+          if (reconnectTimeoutRef.current) {
+            clearTimeout(reconnectTimeoutRef.current);
+            reconnectTimeoutRef.current = null;
+          }
+        };
+
+        ws.onmessage = (event) => {
+          try {
+            const data = JSON.parse(event.data);
+            
+            if (data.type === "order_update" && data.order) {
+              // تحديث قائمة الطلبيات
+              queryClient.setQueryData<Order[]>(["/api/orders"], (oldOrders) => {
+                if (!oldOrders) return oldOrders;
+                return oldOrders.map((o) => (o.id === data.order.id ? data.order : o));
+              });
+              
+              // إرسال إشعار المتصفح إذا كان مفعلاً
+              if (notificationPermission === "granted") {
+                notifyOrderUpdate(data.order.orderNumber, data.order.orderStatus);
+              }
+            } else if (data.type === "order_create" && data.order) {
+              // إضافة طلبية جديدة
+              queryClient.setQueryData<Order[]>(["/api/orders"], (oldOrders) => {
+                if (!oldOrders) return [data.order];
+                return [data.order, ...oldOrders];
+              });
+              
+              // إرسال إشعار المتصفح إذا كان مفعلاً
+              if (notificationPermission === "granted") {
+                notifyNewOrder(data.order.orderNumber, data.order.customerName);
+              }
+            } else if (data.type === "order_delete" && data.orderId) {
+              // حذف طلبية
+              queryClient.setQueryData<Order[]>(["/api/orders"], (oldOrders) => {
+                if (!oldOrders) return oldOrders;
+                const deletedOrder = oldOrders.find((o) => o.id === data.orderId);
+                if (deletedOrder && notificationPermission === "granted") {
+                  notifyOrderDeleted(deletedOrder.orderNumber);
+                }
+                return oldOrders.filter((o) => o.id !== data.orderId);
+              });
+            }
+          } catch (error) {
+            console.error("خطأ في معالجة رسالة WebSocket:", error);
+          }
+        };
+
+        ws.onerror = (error) => {
+          console.error("خطأ في WebSocket:", error);
+        };
+
+        ws.onclose = () => {
+          console.log("تم إغلاق اتصال WebSocket (لوحة التحكم)");
+          // إعادة الاتصال بعد 3 ثوانٍ
+          reconnectTimeoutRef.current = setTimeout(() => {
+            connectWebSocket();
+          }, 3000);
+        };
+
+        wsRef.current = ws;
+      } catch (error) {
+        console.error("خطأ في الاتصال بـ WebSocket:", error);
+      }
+    };
+
+    connectWebSocket();
+
+    return () => {
+      if (wsRef.current) {
+        wsRef.current.close();
+        wsRef.current = null;
+      }
+      if (reconnectTimeoutRef.current) {
+        clearTimeout(reconnectTimeoutRef.current);
+      }
+    };
+  }, [isAuthenticated, notificationPermission]);
+
+  // طلب إذن الإشعارات
+  const handleEnableNotifications = async () => {
+    try {
+      const permission = await requestNotificationPermission();
+      setNotificationPermission(permission);
+      
+      if (permission === "granted") {
+        toast({
+          title: "تم تفعيل الإشعارات",
+          description: "ستتلقى إشعارات عند تحديث الطلبيات",
+        });
+      } else {
+        toast({
+          title: "لم يتم تفعيل الإشعارات",
+          description: "يرجى السماح بالإشعارات من إعدادات المتصفح",
+          variant: "destructive",
+        });
+      }
+    } catch (error: any) {
+      toast({
+        title: "خطأ",
+        description: error.message || "حدث خطأ أثناء تفعيل الإشعارات",
+        variant: "destructive",
+      });
+    }
+  };
 
   const deleteMutation = useMutation({
     mutationFn: async (id: number) => {
@@ -105,10 +259,16 @@ export default function AdminDashboard() {
   const filteredOrders = orders.filter((order) => {
     if (!searchQuery) return true;
     const query = searchQuery.toLowerCase();
+    
+    // البحث برقم الحساب
+    const customer = order.customerId ? customers.find(c => c.id === order.customerId) : null;
+    const accountNumberMatch = customer?.accountNumber?.toLowerCase().includes(query) || false;
+    
     return (
       order.orderNumber.toLowerCase().includes(query) ||
       order.phoneNumber.includes(query) ||
-      order.customerName.toLowerCase().includes(query)
+      order.customerName.toLowerCase().includes(query) ||
+      accountNumberMatch
     );
   });
 
@@ -152,10 +312,10 @@ export default function AdminDashboard() {
             </div>
           </div>
           <div className="flex items-center gap-2">
-            <Link href="/">
-              <Button variant="ghost" size="sm" data-testid="link-tracking">
-                <Package className="w-4 h-4 ml-2" />
-                صفحة التتبع
+            <Link href="/admin/settings">
+              <Button variant="ghost" size="sm">
+                <SettingsIcon className="w-4 h-4 ml-2" />
+                الإعدادات
               </Button>
             </Link>
             <Button 
@@ -167,6 +327,28 @@ export default function AdminDashboard() {
               <LogOut className="w-4 h-4 ml-2" />
               خروج
             </Button>
+            {isNotificationSupported() && notificationPermission !== "granted" && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleEnableNotifications}
+                title="تفعيل إشعارات المتصفح"
+              >
+                <Bell className="w-4 h-4 ml-2" />
+                تفعيل الإشعارات
+              </Button>
+            )}
+            {notificationPermission === "granted" && (
+              <Button
+                variant="ghost"
+                size="sm"
+                disabled
+                title="الإشعارات مفعلة"
+              >
+                <Bell className="w-4 h-4 ml-2 text-primary" />
+                الإشعارات مفعلة
+              </Button>
+            )}
           </div>
         </div>
       </header>
@@ -204,8 +386,8 @@ export default function AdminDashboard() {
           <Card>
             <CardContent className="pt-6">
               <div className="flex items-center gap-4">
-                <div className="w-12 h-12 bg-green-100 dark:bg-green-900/30 rounded-lg flex items-center justify-center">
-                  <CheckCircle2 className="w-6 h-6 text-green-600 dark:text-green-400" />
+                <div className="w-12 h-12 bg-blue-100 dark:bg-blue-900/30 rounded-lg flex items-center justify-center">
+                  <CheckCircle2 className="w-6 h-6 text-blue-600 dark:text-blue-400" />
                 </div>
                 <div>
                   <p className="text-sm text-muted-foreground">تم التسليم</p>
@@ -230,17 +412,24 @@ export default function AdminDashboard() {
           </Card>
         </div>
 
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between gap-4 flex-wrap">
-            <div>
-              <CardTitle className="flex items-center gap-2">
-                <Package className="w-5 h-5" />
-                إدارة الطلبيات
-              </CardTitle>
-              <CardDescription className="mt-1">
-                عرض وإدارة جميع الطلبيات
-              </CardDescription>
-            </div>
+        <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
+          <TabsList className="grid w-full grid-cols-2">
+            <TabsTrigger value="orders">الطلبيات</TabsTrigger>
+            <TabsTrigger value="customers">العملاء</TabsTrigger>
+          </TabsList>
+
+          <TabsContent value="orders" className="space-y-6">
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between gap-4 flex-wrap">
+                <div>
+                  <CardTitle className="flex items-center gap-2">
+                    <Package className="w-5 h-5" />
+                    إدارة الطلبيات
+                  </CardTitle>
+                  <CardDescription className="mt-1">
+                    عرض وإدارة جميع الطلبيات
+                  </CardDescription>
+                </div>
             <div className="flex items-center gap-2 flex-wrap">
               <Button 
                 variant="outline" 
@@ -286,7 +475,7 @@ export default function AdminDashboard() {
             <div className="relative max-w-md">
               <Search className="absolute right-3 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground" />
               <Input
-                placeholder="البحث برقم الطلبية، الهاتف، أو اسم الزبون..."
+                placeholder="البحث برقم الطلبية، الهاتف، اسم الزبون، أو رقم الحساب..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 className="pr-10"
@@ -321,26 +510,23 @@ export default function AdminDashboard() {
                   <Table>
                     <TableHeader>
                       <TableRow className="bg-muted/50">
-                        <TableHead className="text-right font-semibold">رقم الطلبية</TableHead>
-                        <TableHead className="text-right font-semibold">اسم الزبون</TableHead>
-                        <TableHead className="text-right font-semibold">الهاتف</TableHead>
-                        <TableHead className="text-right font-semibold">الحالة</TableHead>
-                        <TableHead className="text-right font-semibold">تاريخ الوصول</TableHead>
-                        <TableHead className="text-left font-semibold">الإجراءات</TableHead>
+                        <TableHead className="text-center font-semibold">الإجراءات</TableHead>
+                        <TableHead className="text-center font-semibold">تاريخ الوصول</TableHead>
+                        <TableHead className="text-center font-semibold">الحالة</TableHead>
+                        <TableHead className="text-center font-semibold">قيمة الشحن</TableHead>
+                        <TableHead className="text-center font-semibold">قيمة الطلبية</TableHead>
+                        <TableHead className="text-center font-semibold">عدد الأصناف</TableHead>
+                        <TableHead className="text-center font-semibold">رقم الطلبية</TableHead>
+                        <TableHead className="text-center font-semibold">الهاتف</TableHead>
+                        <TableHead className="text-center font-semibold">اسم الزبون</TableHead>
+                        <TableHead className="text-center font-semibold">رقم الحساب</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
                       {filteredOrders.map((order) => (
                         <TableRow key={order.id} data-testid={`row-order-${order.id}`}>
-                          <TableCell className="font-medium">{order.orderNumber}</TableCell>
-                          <TableCell>{order.customerName}</TableCell>
-                          <TableCell dir="ltr" className="text-right">{order.phoneNumber}</TableCell>
-                          <TableCell>
-                            <OrderStatusBadge status={order.orderStatus as OrderStatus} size="sm" showIcon={false} />
-                          </TableCell>
-                          <TableCell>{order.estimatedDeliveryDate || "غير محدد"}</TableCell>
-                          <TableCell>
-                            <div className="flex items-center gap-1">
+                          <TableCell className="text-center">
+                            <div className="flex items-center justify-center gap-1">
                               <Button
                                 variant="ghost"
                                 size="icon"
@@ -384,6 +570,29 @@ export default function AdminDashboard() {
                               </AlertDialog>
                             </div>
                           </TableCell>
+                          <TableCell className="text-center">{order.estimatedDeliveryDate || "غير محدد"}</TableCell>
+                          <TableCell className="text-center">
+                            <div className="flex justify-center">
+                              <OrderStatusBadge status={order.orderStatus as OrderStatus} size="sm" showIcon={false} />
+                            </div>
+                          </TableCell>
+                          <TableCell dir="ltr" className="text-center">
+                            {order.shippingCost ? `${order.shippingCost} د.ل` : "-"}
+                          </TableCell>
+                          <TableCell dir="ltr" className="text-center">
+                            {order.orderValue ? `${order.orderValue} د.ل` : "-"}
+                          </TableCell>
+                          <TableCell className="text-center">
+                            {order.itemsCount ? order.itemsCount : "-"}
+                          </TableCell>
+                          <TableCell className="text-center font-medium">{order.orderNumber}</TableCell>
+                          <TableCell dir="ltr" className="text-center">{order.phoneNumber}</TableCell>
+                          <TableCell className="text-center">{order.customerName}</TableCell>
+                          <TableCell className="text-center font-mono">
+                            {order.customerId ? (
+                              customers.find(c => c.id === order.customerId)?.accountNumber || "-"
+                            ) : "-"}
+                          </TableCell>
                         </TableRow>
                       ))}
                     </TableBody>
@@ -392,8 +601,176 @@ export default function AdminDashboard() {
               </div>
             )}
           </CardContent>
-        </Card>
+            </Card>
+          </TabsContent>
+
+          <TabsContent value="customers" className="space-y-6">
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between gap-4 flex-wrap">
+                <div>
+                  <CardTitle className="flex items-center gap-2">
+                    <Package className="w-5 h-5" />
+                    إدارة العملاء
+                  </CardTitle>
+                  <CardDescription className="mt-1">
+                    إنشاء وإدارة حسابات العملاء
+                  </CardDescription>
+                </div>
+                <Dialog 
+                  open={isCustomerFormOpen} 
+                  onOpenChange={(open) => {
+                    setIsCustomerFormOpen(open);
+                    if (!open) setSelectedCustomer(null);
+                  }}
+                >
+                  <DialogTrigger asChild>
+                    <Button>
+                      <Plus className="w-4 h-4 ml-2" />
+                      إنشاء حساب عميل
+                    </Button>
+                  </DialogTrigger>
+                  <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+                    <DialogHeader>
+                      <DialogTitle>
+                        {selectedCustomer ? "تعديل بيانات العميل" : "إنشاء حساب عميل جديد"}
+                      </DialogTitle>
+                      <DialogDescription>
+                        {selectedCustomer 
+                          ? "قم بتعديل بيانات العميل" 
+                          : "أدخل بيانات العميل لإنشاء حساب خاص به"}
+                      </DialogDescription>
+                    </DialogHeader>
+                    <CustomerForm 
+                      customer={selectedCustomer}
+                      onSuccess={() => {
+                        setIsCustomerFormOpen(false);
+                        setSelectedCustomer(null);
+                        refetchCustomers();
+                      }}
+                      onCancel={() => {
+                        setIsCustomerFormOpen(false);
+                        setSelectedCustomer(null);
+                      }}
+                    />
+                  </DialogContent>
+                </Dialog>
+              </CardHeader>
+              <CardContent>
+                {isLoadingCustomers ? (
+                  <div className="flex items-center justify-center py-12">
+                    <Loader2 className="w-8 h-8 animate-spin text-primary" />
+                  </div>
+                ) : customers.length === 0 ? (
+                  <div className="text-center py-12">
+                    <Package className="w-12 h-12 mx-auto text-muted-foreground/50 mb-4" />
+                    <p className="text-muted-foreground">لا توجد حسابات عملاء حتى الآن</p>
+                    <Button 
+                      className="mt-4" 
+                      onClick={() => setIsCustomerFormOpen(true)}
+                    >
+                      <Plus className="w-4 h-4 ml-2" />
+                      إنشاء أول حساب
+                    </Button>
+                  </div>
+                ) : (
+                  <div className="rounded-lg border overflow-hidden">
+                    <Table>
+                      <TableHeader>
+                        <TableRow className="bg-muted/50">
+                          <TableHead className="text-center font-semibold">الإجراءات</TableHead>
+                          <TableHead className="text-center font-semibold">تاريخ الإنشاء</TableHead>
+                          <TableHead className="text-center font-semibold">رقم الهاتف</TableHead>
+                          <TableHead className="text-center font-semibold">اسم العميل</TableHead>
+                          <TableHead className="text-center font-semibold">رقم الحساب</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {customers.map((customer) => (
+                          <TableRow key={customer.id}>
+                            <TableCell className="text-center">
+                              <div className="flex items-center justify-center gap-1">
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  onClick={() => {
+                                    setSelectedCustomer(customer);
+                                    setIsCustomerFormOpen(true);
+                                  }}
+                                >
+                                  <Edit className="w-4 h-4" />
+                                </Button>
+                                <AlertDialog>
+                                  <AlertDialogTrigger asChild>
+                                    <Button
+                                      variant="ghost"
+                                      size="icon"
+                                      className="text-destructive hover:text-destructive"
+                                    >
+                                      <Trash2 className="w-4 h-4" />
+                                    </Button>
+                                  </AlertDialogTrigger>
+                                  <AlertDialogContent>
+                                    <AlertDialogHeader>
+                                      <AlertDialogTitle>تأكيد الحذف</AlertDialogTitle>
+                                      <AlertDialogDescription>
+                                        هل أنت متأكد من حذف حساب العميل {customer.name}؟ لا يمكن التراجع عن هذا الإجراء.
+                                      </AlertDialogDescription>
+                                    </AlertDialogHeader>
+                                    <AlertDialogFooter className="gap-2">
+                                      <AlertDialogCancel>إلغاء</AlertDialogCancel>
+                                      <AlertDialogAction
+                                        className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                                        onClick={async () => {
+                                          try {
+                                            const response = await fetch(`/api/customers/${customer.id}`, {
+                                              method: "DELETE",
+                                              headers: {
+                                                Authorization: `Bearer ${token}`,
+                                              },
+                                            });
+                                            if (response.ok) {
+                                              toast({
+                                                title: "تم الحذف بنجاح",
+                                                description: `تم حذف حساب العميل ${customer.name}`,
+                                              });
+                                              refetchCustomers();
+                                            } else {
+                                              throw new Error("فشل الحذف");
+                                            }
+                                          } catch (error) {
+                                            toast({
+                                              title: "خطأ",
+                                              description: "حدث خطأ أثناء حذف العميل",
+                                              variant: "destructive",
+                                            });
+                                          }
+                                        }}
+                                      >
+                                        حذف
+                                      </AlertDialogAction>
+                                    </AlertDialogFooter>
+                                  </AlertDialogContent>
+                                </AlertDialog>
+                              </div>
+                            </TableCell>
+                            <TableCell className="text-center">
+                              {customer.createdAt ? new Date(customer.createdAt).toLocaleDateString("ar-LY") : "-"}
+                            </TableCell>
+                            <TableCell dir="ltr" className="text-center">{customer.phoneNumber}</TableCell>
+                            <TableCell className="text-center">{customer.name}</TableCell>
+                            <TableCell className="text-center font-medium" dir="ltr">{customer.accountNumber}</TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </TabsContent>
+        </Tabs>
       </main>
+      <Footer />
     </div>
   );
 }

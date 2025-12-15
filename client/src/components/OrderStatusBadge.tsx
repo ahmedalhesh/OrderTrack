@@ -24,7 +24,7 @@ const statusConfig: Record<OrderStatus, {
   },
   "تم تأكيد الدفع": { 
     variant: "secondary", 
-    className: "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-400 border-emerald-200 dark:border-emerald-800",
+    className: "bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400 border-blue-200 dark:border-blue-800",
     icon: CreditCard
   },
   "تم الشراء من الموقع": { 
@@ -54,7 +54,7 @@ const statusConfig: Record<OrderStatus, {
   },
   "تم التسليم": { 
     variant: "default", 
-    className: "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400 border-green-200 dark:border-green-800",
+    className: "bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400 border-blue-200 dark:border-blue-800",
     icon: CheckCircle2
   },
   "ملغاة / توجد مشكلة": { 

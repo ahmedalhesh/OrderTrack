@@ -10,6 +10,7 @@ import { Package, Lock, User, Loader2, ArrowLeft } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useAuthStore } from "@/lib/auth";
 import { useLocation, Link } from "wouter";
+import { Footer } from "@/components/Footer";
 
 export default function AdminLogin() {
   const [isLoading, setIsLoading] = useState(false);
@@ -161,11 +162,7 @@ export default function AdminLogin() {
         </Card>
       </main>
 
-      <footer className="border-t py-4">
-        <div className="container mx-auto px-4 text-center text-sm text-muted-foreground">
-          © {new Date().getFullYear()} شركة الوسيط للشراء من الإنترنت
-        </div>
-      </footer>
+      <Footer />
     </div>
   );
 }

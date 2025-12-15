@@ -1,0 +1,34 @@
+{
+  "version": "7",
+  "dialect": "sqlite",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "6",
+      "when": 1765818373144,
+      "tag": "0000_acoustic_metal_master",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1765820037717,
+      "tag": "0001_watery_shadowcat",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1765821196621,
+      "tag": "0002_familiar_johnny_storm",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1765821873975,
+      "tag": "0003_cultured_mastermind",
+      "breakpoints": true
+    }
+  ]
+}
