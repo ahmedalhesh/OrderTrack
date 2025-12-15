@@ -1,6 +1,7 @@
 import { build as esbuild } from "esbuild";
 import { build as viteBuild } from "vite";
 import { rm, readFile } from "fs/promises";
+import path from "path";
 
 // server deps to bundle to reduce openat(2) syscalls
 // which helps cold start times
@@ -54,6 +55,9 @@ async function buildAll() {
     outfile: "dist/index.cjs",
     define: {
       "process.env.NODE_ENV": '"production"',
+    },
+    banner: {
+      js: `var __dirname = ${JSON.stringify(path.resolve(process.cwd(), "dist"))};`,
     },
     minify: true,
     external: externals,

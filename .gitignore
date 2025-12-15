@@ -10,3 +10,5 @@ data/
 *.db
 .env
 .local/
+logs/
+*.log
