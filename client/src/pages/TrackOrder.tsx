@@ -15,6 +15,7 @@ import { Search, Package, Phone, Calendar, MessageSquare, Loader2, ArrowLeft, Lo
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import { Link } from "wouter";
+import { getApiUrl } from "@/lib/api";
 
 export default function TrackOrder() {
   const [order, setOrder] = useState<Order | null>(null);
@@ -29,7 +30,7 @@ export default function TrackOrder() {
   const { data: companySettings } = useQuery({
     queryKey: ["/api/settings/public"],
     queryFn: async () => {
-      const response = await fetch("/api/settings/public");
+      const response = await fetch(getApiUrl("/api/settings/public"));
       if (!response.ok) return null;
       return response.json();
     },

@@ -27,6 +27,8 @@ export interface IStorage {
   
   getSettings(): Promise<Settings | undefined>;
   updateSettings(settingsData: UpdateSettings): Promise<Settings>;
+  generateNextOrderNumber(): Promise<string>;
+  generateNextCustomerNumber(): Promise<string>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -156,8 +158,15 @@ export class DatabaseStorage implements IStorage {
   }
 
   async createCustomer(insertCustomer: InsertCustomer): Promise<Customer> {
+    // توليد رقم الحساب تلقائياً إذا لم يكن موجوداً
+    let accountNumber = insertCustomer.accountNumber;
+    if (!accountNumber || accountNumber.trim() === "") {
+      accountNumber = await this.generateNextCustomerNumber();
+    }
+
     const [customer] = await db.insert(customers).values({
       ...insertCustomer,
+      accountNumber,
       updatedAt: new Date(),
     }).returning();
     return customer;

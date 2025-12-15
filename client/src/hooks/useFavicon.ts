@@ -1,12 +1,13 @@
 import { useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { getApiUrl } from "@/lib/api";
 
 export function useFavicon() {
   // جلب بيانات الشركة
   const { data: companySettings } = useQuery({
     queryKey: ["/api/settings/public"],
     queryFn: async () => {
-      const response = await fetch("/api/settings/public");
+      const response = await fetch(getApiUrl("/api/settings/public"));
       if (!response.ok) return null;
       return response.json();
     },

@@ -44,7 +44,7 @@ export function ChangePasswordForm({ onSuccess }: ChangePasswordFormProps) {
   const onSubmit = async (data: ChangePasswordFormData) => {
     setIsLoading(true);
     try {
-      const response = await fetch("/api/customer/change-password", {
+      const response = await fetch(getApiUrl("/api/customer/change-password"), {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",

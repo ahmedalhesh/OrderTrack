@@ -1,4 +1,5 @@
 import { QueryClient, QueryFunction } from "@tanstack/react-query";
+import { getApiUrl } from "./api";
 
 function getStoredToken(): string | null {
   try {
@@ -36,7 +37,10 @@ export async function apiRequest(
     headers["Authorization"] = `Bearer ${token}`;
   }
 
-  const res = await fetch(url, {
+  // Convert relative URLs to full API URLs
+  const fullUrl = url.startsWith("http") ? url : getApiUrl(url);
+
+  const res = await fetch(fullUrl, {
     method,
     headers,
     body: data ? JSON.stringify(data) : undefined,
@@ -60,7 +64,11 @@ export const getQueryFn: <T>(options: {
       headers["Authorization"] = `Bearer ${token}`;
     }
 
-    const res = await fetch(queryKey[0] as string, {
+    // Convert relative URLs to full API URLs
+    const url = queryKey[0] as string;
+    const fullUrl = url.startsWith("http") ? url : getApiUrl(url);
+
+    const res = await fetch(fullUrl, {
       credentials: "include",
       headers,
     });

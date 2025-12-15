@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
+import { getApiUrl } from "@/lib/api";
 import { useAuthStore } from "@/lib/auth";
 import { useLocation, Link } from "wouter";
 import { queryClient, apiRequest } from "@/lib/queryClient";
@@ -67,7 +68,7 @@ export default function SettingsPage() {
     queryKey: ["/api/settings"],
     enabled: isAuthenticated,
     queryFn: async () => {
-      const response = await fetch("/api/settings", {
+      const response = await fetch(getApiUrl("/api/settings"), {
         headers: {
           Authorization: `Bearer ${token}`,
         },
@@ -101,7 +102,7 @@ export default function SettingsPage() {
 
   const updateSettingsMutation = useMutation({
     mutationFn: async (data: Settings) => {
-      const response = await fetch("/api/settings", {
+      const response = await fetch(getApiUrl("/api/settings"), {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",

@@ -90,7 +90,7 @@ export function OrderForm({ order, onSuccess, onCancel }: OrderFormProps) {
   const onSubmit = async (data: InsertOrder & { customerId?: number }) => {
     setIsLoading(true);
     try {
-      const url = order ? `/api/orders/${order.id}` : "/api/orders";
+      const url = order ? getApiUrl(`/api/orders/${order.id}`) : getApiUrl("/api/orders");
       const method = order ? "PUT" : "POST";
       
       // إرسال البيانات مع customerId إذا كان موجوداً

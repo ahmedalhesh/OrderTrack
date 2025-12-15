@@ -1,0 +1,20 @@
+name = "ordertrack"
+main = "dist/worker.mjs"
+compatibility_date = "2024-01-01"
+compatibility_flags = ["nodejs_compat"]
+
+# D1 Database binding
+[[d1_databases]]
+binding = "DB"
+database_name = "ordertrack-db"
+database_id = ""  # سيتم ملؤه عند إنشاء قاعدة البيانات: wrangler d1 create ordertrack-db
+
+[env.production]
+name = "ordertrack-prod"
+
+[env.production.vars]
+NODE_ENV = "production"
+
+[build]
+command = "npm run build:worker"
+

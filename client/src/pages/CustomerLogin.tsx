@@ -43,7 +43,7 @@ export default function CustomerLogin() {
         loginData.phoneNumber = identifier;
       }
 
-      const response = await fetch("/api/customer/login", {
+      const response = await fetch(getApiUrl("/api/customer/login"), {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
